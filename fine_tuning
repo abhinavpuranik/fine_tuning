@@ -1,0 +1,137 @@
+import torch
+from transformers import AdamW, AutoTokenizer, AutoModelForSequenceClassification
+from datasets import load_dataset
+from transformers import AutoTokenizer
+from transformers import DataCollatorWithPadding
+from transformers import Trainer
+import evaluate
+from torch.utils.data import DataLoader
+from transformers import AdamW
+from transformers import get_scheduler
+import torch
+import evaluate
+
+
+#done using trainer first, then without
+
+raw_datasets = load_dataset("glue", "mrpc")
+
+
+
+checkpoint = "bert-base-uncased"
+tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+tokenized_dataset = tokenizer(
+    raw_datasets["train"]["sentence1"],
+    raw_datasets["train"]["sentence2"],
+    padding = True,
+    truncation = True,
+
+)
+def tokenize_function(example):
+    return tokenizer(example["sentence1"], example["sentence2"], truncation=True)
+
+tokenized_datasets = raw_datasets.map(tokenize_function, batched=True)
+
+
+data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
+
+
+
+trainer = Trainer(
+    model,
+    training_args,
+    train_dataset = tokenized_datasets["train"],
+    eval_dataset = tokenized_datasets["validation"],
+    tokenizer = tokenizer,
+)
+
+predictions = trainer.predict(tokenized_datasets["validation"])
+
+preds = np.argmax(predictions.predictions, axis=-1)
+
+metric = evaluate.load("glue", "mrpc")
+metric.compute(predictions=preds, references = predictions.label_ids)
+def compute_metrics(eval_preds):
+  metric =evaluate.load("glue", "mrpc")
+  logits, labels = eval_preds
+  predictions = np.argmax(logits, axis = -1)
+  return metric.compute(predictions=predictions, references=labels)
+
+  training_args = TrainingArguments("test-trainer", evaluation_strategy="epoch")
+model = AutoModelForSequenceClassification.from_pretrained(checkpoint, num_labels=2)
+
+trainer = Trainer(
+    model,
+    training_args,
+    train_dataset = tokenized_datasets["train"],
+    eval_dataset = tokenized_datasets["validation"],
+    data_collator = data_collator,
+    tokenizer = tokenizer,
+    compute_metrics = compute_metrics,
+)
+
+
+trainer.train()
+
+#doing the same thing with pure pytorch (without using 'trainer')
+tokenized_datasets.set_format("torch")
+tokenized_datasets["train"].column_names
+
+
+train_dataloader = DataLoader(
+    tokenized_datasets["train"], shuffle=True, batch_size=8, collate_fn=data_collator
+
+)
+eval_dataloader = DataLoader(
+    tokenized_datasets["validation"], batch_size=8, collate_fn=data_collator
+
+)
+
+outputs = model(**batch)
+
+optimizer = AdamW(model.parameters(), lr=5e-5)
+
+num_epochs = 3
+num_training_steps = num_epochs * len(train_dataloader)
+
+lr_scheduler = get_scheduler(
+    "linear",
+    optimizer=optimizer,
+    num_warmup_steps=0,
+    num_training_steps=num_training_steps,
+
+)
+
+
+
+model.train()
+for epoch in range(num_epochs):
+    for batch in train_dataloader:
+        batch = {k: v.to(device) for k, v in batch.items()}
+        outputs = model(**batch)
+        loss = outputs.loss
+        loss.backward()
+
+        optimizer.step()
+        lr_scheduler.step()
+        optimizer.zero_grad()
+
+
+
+
+metric = evaluate.load("glue", "mrpc")
+model.eval()
+for batch in eval_dataloader:
+    batch = {k: v.to(device) for k, v in batch.items()}
+    with torch.no_grad():
+        outputs = model(**batch)
+
+    logits = outputs.logits
+    predictions = torch.argmax(logits, dim=-1)
+    metric.add_batch(predictions=predictions, references=batch["labels"])
+
+metric.compute()
+
+
+
+
